@@ -63,6 +63,8 @@ class MySQLToS3Operator(BaseOperator):
                  incremental_key=None,
                  start=None,
                  end=None,
+                 mysql_table_key=None,
+                 query=None,
                  *args,
                  **kwargs):
         super().__init__(*args, **kwargs)
@@ -75,10 +77,16 @@ class MySQLToS3Operator(BaseOperator):
         self.incremental_key = incremental_key
         self.start = start
         self.end = end
+        self.mysql_table_key = mysql_table_key
+        self.query = query
 
     def execute(self, context):
         hook = AstroMySqlHook(self.mysql_conn_id)
-        self.get_records(hook)
+        if self.query:
+            self.get_records_from_query(hook, self.query)
+        else:
+            self.get_records(hook)
+
         if self.package_schema:
             self.get_schema(hook, self.mysql_table)
 
@@ -99,6 +107,7 @@ class MySQLToS3Operator(BaseOperator):
         logging.info('Initiating record retrieval.')
         logging.info('Start Date: {0}'.format(self.start))
         logging.info('End Date: {0}'.format(self.end))
+        query_filter = ''
 
         if all([self.incremental_key, self.start, self.end]):
             query_filter = """ WHERE {0} >= '{1}' AND {0} < '{2}'
@@ -118,22 +127,19 @@ class MySQLToS3Operator(BaseOperator):
             {1}
             """.format(self.mysql_table, query_filter)
 
-        # Perform query and convert returned tuple to list
-        results = list(hook.get_records(query))
+        results = hook.get_pandas_df(query)
         logging.info('Successfully performed query.')
 
-        # Iterate through list of dictionaries (one dict per row queried)
-        # and convert datetime and date values to isoformat.
-        # (e.g. datetime(2017, 08, 01) --> "2017-08-01T00:00:00")
-        results = [dict([k, str(v)] if v is not None else [k, v]
-                   for k, v in i.items()) for i in results]
-        results = '\n'.join([json.dumps(i) for i in results])
-        self.s3_upload(results)
+        results = results.set_index(self.mysql_table_key)
+        csv = results.to_csv()
+
+        self.s3_upload(csv)
         return results
 
     def s3_upload(self, results, schema=False):
-        s3 = S3Hook(s3_conn_id=self.s3_conn_id)
+        s3 = S3Hook(aws_conn_id=self.s3_conn_id)
         key = '{0}'.format(self.s3_key)
+
         # If the file being uploaded to s3 is a schema, append "_schema" to the
         # end of the file name.
         if schema and key[-5:] == '.json':
@@ -146,5 +152,38 @@ class MySQLToS3Operator(BaseOperator):
             key=key,
             replace=True
         )
-        s3.connection.close()
+        # s3.connection.close()
         logging.info('File uploaded to s3')
+
+    def get_records_from_query(self, hook, query):
+        logging.info('Initiating record retrieval.')
+        logging.info('Start Date: {0}'.format(self.start))
+        logging.info('End Date: {0}'.format(self.end))
+        query_filter = ''
+
+        if all([self.incremental_key, self.start, self.end]):
+            query_filter = """ WHERE {0} >= '{1}' AND {0} < '{2}'
+                """.format(self.incremental_key, self.start, self.end)
+
+        if all([self.incremental_key, self.start]) and not self.end:
+            query_filter = """ WHERE {0} >= '{1}'
+                """.format(self.incremental_key, self.start)
+
+        if not self.incremental_key:
+            query_filter = ''
+
+        query = \
+            """
+            {0}
+            {1}
+            """.format(query, query_filter)
+
+        results = hook.get_pandas_df(query)
+        logging.info('Successfully performed query.')
+
+        results = results.set_index(self.mysql_table_key)
+        csv = results.to_csv()
+
+        self.s3_upload(csv)
+
+        return results
