@@ -130,7 +130,9 @@ class MySQLToS3Operator(BaseOperator):
         results = hook.get_pandas_df(query)
         logging.info('Successfully performed query.')
 
-        results = results.set_index(self.mysql_table_key)
+        if self.mysql_table_key:
+            results = results.set_index(self.mysql_table_key)
+
         csv = results.to_csv()
 
         self.s3_upload(csv)
@@ -181,7 +183,9 @@ class MySQLToS3Operator(BaseOperator):
         results = hook.get_pandas_df(query)
         logging.info('Successfully performed query.')
 
-        results = results.set_index(self.mysql_table_key)
+        if self.mysql_table_key:
+            results = results.set_index(self.mysql_table_key)
+
         csv = results.to_csv()
 
         self.s3_upload(csv)
