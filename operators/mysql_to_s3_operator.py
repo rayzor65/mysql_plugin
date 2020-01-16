@@ -65,6 +65,7 @@ class MySQLToS3Operator(BaseOperator):
                  end=None,
                  mysql_table_key=None,
                  query=None,
+                 file_type='parquet',
                  *args,
                  **kwargs):
         super().__init__(*args, **kwargs)
@@ -79,6 +80,7 @@ class MySQLToS3Operator(BaseOperator):
         self.end = end
         self.mysql_table_key = mysql_table_key
         self.query = query
+        self.file_type = file_type
 
     def execute(self, context):
         hook = AstroMySqlHook(self.mysql_conn_id)
@@ -133,9 +135,13 @@ class MySQLToS3Operator(BaseOperator):
         if self.mysql_table_key:
             results = results.set_index(self.mysql_table_key)
 
-        csv = results.to_csv()
+        if self.file_type == 'parquet':
+            file = 'test.parquet'
+            results.to_parquet(file)
+        else:
+            file = results.to_csv()
 
-        self.s3_upload(csv)
+        self.s3_upload(file)
         return results
 
     def s3_upload(self, results, schema=False):
@@ -148,12 +154,22 @@ class MySQLToS3Operator(BaseOperator):
             key = key[:-5] + '_schema' + key[-5:]
         if schema and key[-4:] == '.csv':
             key = key[:-4] + '_schema' + key[-4:]
-        s3.load_string(
-            string_data=results,
-            bucket_name=self.s3_bucket,
-            key=key,
-            replace=True
-        )
+
+        if self.file_type == 'parquet':
+            s3.load_file(
+                filename='test.parquet',
+                bucket_name=self.s3_bucket,
+                key=key,
+                replace=True
+            )
+        else:
+            s3.load_string(
+                string_data=results,
+                bucket_name=self.s3_bucket,
+                key=key,
+                replace=True
+            )
+
         # s3.connection.close()
         logging.info('File uploaded to s3')
 
@@ -186,8 +202,12 @@ class MySQLToS3Operator(BaseOperator):
         if self.mysql_table_key:
             results = results.set_index(self.mysql_table_key)
 
-        csv = results.to_csv()
+        if self.file_type == 'parquet':
+            file = 'test.parquet'
+            results.to_parquet(file)
+        else:
+            file = results.to_csv()
 
-        self.s3_upload(csv)
+        self.s3_upload(file)
 
         return results
